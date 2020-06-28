@@ -1,0 +1,126 @@
+#include "WiFi.h" // ESP32 WiFi include
+#include "WiFiConfig.h" // My WiFi configuration
+#include "time.h"
+#include "PubSubClient.h"
+
+// Constants definitions
+const int LED = 2;
+const int PIR_Input = 12;
+
+//Mqtt Broker
+const char* mqtt_server = "192.168.2.109";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+long lastMsg = 0;
+char msg[50];
+int value = 0;
+
+// variable for storing the PIR Status 
+int PIR_State = 0;          // current state of the button
+int PIR_State_old = 0;     // previous state of the button
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 3600;
+const int   daylightOffset_sec = 3600;
+
+void setup() {
+  
+  // Set pin mode
+  pinMode(LED,OUTPUT);
+  pinMode(PIR_Input,INPUT);
+
+  // put your setup code here, to run once:
+  Serial.begin(9600);
+  ConnectToWiFi();
+  
+  //Mqtt configuration
+  client.setServer(mqtt_server, 1883);
+   // client.setCallback(callback);
+
+  //init and get the time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+}
+
+void printLocalTime(int PIR_Info)
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S => 1");
+}
+
+void ConnectToWiFi()
+{
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(SSID, WiFiPassword);
+  Serial.print("Connecting to "); Serial.println(SSID);
+
+  uint8_t i = 0;
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print('.');
+    delay(500);
+
+    if ((++i % 16) == 0)
+    {
+      Serial.println(F(" still trying to connect"));
+    }
+  }
+
+  Serial.print(F("Connected. My IP address is: "));
+  Serial.println(WiFi.localIP());
+} 
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (client.connect("ESP8266Client")) {
+      Serial.println("connected");
+      // Subscribe
+      // client.subscribe("esp32/output");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+void loop() {
+    
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+  // read the state of the PIR Input
+  PIR_State = digitalRead(PIR_Input); 
+
+  // compare the PIR_State to its previous state
+  if (PIR_State != PIR_State_old) {
+    // if the state has changed, increment the counter
+    if (PIR_State == HIGH) {
+      // if the current state is HIGH then the PIR went from off to on:
+      digitalWrite(LED, HIGH);
+      //printLocalTime(PIR_State);
+      client.publish("esp32/PIR", "OPEN");
+    } else {
+      // if the current state is LOW then the button went from on to off:
+      Serial.println("PIR = 0");
+      digitalWrite(LED, LOW);
+      client.publish("esp32/PIR", "CLOSED");
+    }
+    // Delay a little bit to avoid bouncing
+    delay(100);
+  }
+  // save the current state as the last state, for next time through the loop
+  PIR_State_old = PIR_State;
+}
